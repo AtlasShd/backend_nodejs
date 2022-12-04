@@ -11,6 +11,8 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
+import Pdfkit from 'pdfkit';
+import fs from 'fs';
 import userModel from '../models/userModel.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -52,11 +54,11 @@ class UserController {
         var _a;
         return __awaiter(this, void 0, void 0, function* () {
             const image = (_a = req.files) === null || _a === void 0 ? void 0 : _a.image;
-            if (!image) {
-                throw new Error('Image does not exist!');
+            let imageName;
+            if (image) {
+                imageName = `${uuidv4()}.${image.mimetype.split('/')[1]}`;
+                image.mv(path.resolve(__dirname, '..', 'static', imageName));
             }
-            let imageName = `${uuidv4()}.${image.mimetype.split('/')[1]}`;
-            image.mv(path.resolve(__dirname, '..', 'static', imageName));
             const { id, email, firstName, lastName } = req.body;
             const user = yield userModel.update({ email, firstName, lastName, image: imageName }, { where: { id }, returning: true });
             res.json(user);
@@ -70,6 +72,30 @@ class UserController {
                 yield userModel.destroy({ where: { id } });
             }
             return res.json(user);
+        });
+    }
+    createPdf(req, res) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const { email } = req.body;
+            const user = yield userModel.findOne({ where: { email } });
+            if (!user) {
+                return res.json(false);
+            }
+            if (user.pdf) {
+                fs.unlink(path.resolve(__dirname, '..', 'static', user.pdf), (e) => {
+                    if (e) {
+                        console.log(e);
+                    }
+                });
+            }
+            const pdfDoc = new Pdfkit;
+            const pdfName = `${uuidv4()}.pdf`;
+            pdfDoc.pipe(fs.createWriteStream(path.resolve(__dirname, '..', 'static', pdfName)));
+            pdfDoc.text(`${user.firstName} ${user.lastName}`);
+            pdfDoc.image(path.resolve(__dirname, '..', 'static', user.image), { cover: [450, 150], align: 'center' });
+            pdfDoc.end();
+            yield userModel.update({ pdf: pdfName }, { where: { email } });
+            return res.json(true);
         });
     }
 }

@@ -9,6 +9,7 @@ const router = express();
  router.get('/user', userController.getUsers);
  router.put('/user', userController.updateUser);
  router.delete('/user/:id', userController.deleteUser);
+ router.post('/pdf', userController.createPdf);
 
 
 export default router;
