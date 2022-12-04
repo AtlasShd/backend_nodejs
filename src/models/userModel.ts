@@ -7,8 +7,8 @@ const userModel = sequelize.define('user', {
   email: { type: DataTypes.STRING, unique: true },
   firstName: { type: DataTypes.STRING },
   lastName: { type: DataTypes.STRING },
-  image: { type: DataTypes.BLOB },
-  pdf: { type: DataTypes.BLOB },
+  image: { type: DataTypes.STRING },
+  pdf: { type: DataTypes.STRING },
 });
 
 export default userModel;

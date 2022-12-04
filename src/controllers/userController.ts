@@ -1,7 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import path from 'path';
-import { dirname } from 'path';
+import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import Pdfkit from 'pdfkit';
 import fs from 'fs';
@@ -20,9 +19,9 @@ type imageData = {
   tempFilePath: string,
   truncated: boolean,
   mimetype: string,
-  md5: 'string',
+  md5: string,
   mv: (str: string) => {}
-} | null
+}
 
 type userData = {
   id: number,
@@ -31,108 +30,177 @@ type userData = {
   lastName: string,
   image: string,
   pdf: string,
-} | null
+}
 
 class UserController {
   async createUser(req: Request, res: Response, next: NextFunction) {
     try {
+      const { email, firstName, lastName } = req.body;
       const image = req.files?.image as imageData;
-      if (!image) {
-        throw new Error('Image does not exist!');
+
+      if (!validateEmail(email) || !validateLine(firstName) || !validateLine(lastName) || !image) {
+        return next(ApiError.badRequest('Not all fields are filled in correctly!'));
       }
 
-      let imageName = `${uuidv4()}.${image.mimetype.split('/')[1]}`;
-      image.mv(path.resolve(__dirname, '..', 'static', imageName));
+      const imageName = saveImage(image);
 
-      const { email, firstName, lastName } = req.body;
-  
       const user = await userModel.create({ email, firstName, lastName, image: imageName });
   
       return res.json(user);
     } catch (e) {
       next(e);
+      console.log(e); 
+    }
+
+    
+  }
+
+  async getOneUser(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = req.params.id;
+
+      const user = await userModel.findOne({ where: { id } });
+    
+      return res.json(user);
+    } catch (e) {
+      next(e);
       console.log(e);
     }
-
-    
   }
 
-  async getOneUser(req: Request, res: Response) {
-
-    const id = req.params.id;
-
-    const user = await userModel.findOne(
-      {where: {id}}
-    );
+  async getUsers(req: Request, res: Response, next: NextFunction) {
+    try {
+      const users = await userModel.findAll();
     
-    return res.json(user);
-  }
-
-  async getUsers(req: Request, res: Response) {
-
-    const users = await userModel.findAll();
-    
-    return res.json(users);
+      return res.json(users);
+    } catch (e) {
+      next(e);
+      console.log(e);
+    }
   }
   
-  async updateUser(req: Request, res: Response) {
-    
-    const image = req.files?.image as imageData;
-    let imageName;
+  async updateUser(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id, email, firstName, lastName } = req.body;
+      if (
+      !(validateLine(id) || id == undefined) || 
+      !(validateEmail(email) || email == undefined) || 
+      !(validateLine(firstName) || firstName == undefined) || 
+      !(validateLine(lastName) || lastName == undefined)) {
+        return next(ApiError.badRequest('Not all fields are filled in correctly!'));
+      }
 
-    if (image) {
-      imageName = `${uuidv4()}.${image.mimetype.split('/')[1]}`;
-      image.mv(path.resolve(__dirname, '..', 'static', imageName));
+      const user = await userModel.findOne({ where: { id } }) as userData | null;
+      const image = req.files?.image as imageData;
+      let imageName;
+      if (image && user) {
+        deleteFile(user.image);
+        imageName = saveImage(image);
+      }
+
+      const updatedUser = await userModel.update({ email, firstName, lastName, image: imageName }, { where: { id }, returning: true });
+
+      return res.json(updatedUser);
+    } catch (e) {
+      next(e);
+      console.log(e);
     }
-
-    const { id, email, firstName, lastName } = req.body;
-
-    const user = await userModel.update({ email, firstName, lastName, image: imageName }, { where: { id }, returning: true });
-    
-    res.json(user);
   }
 
-  async deleteUser(req: Request, res: Response) {
-    const id = req.params.id;
+  async deleteUser(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = req.params.id;
 
-    const user = await userModel.findOne({ where: { id } });
+      const user = await userModel.findOne({ where: { id } });
 
-    if (user) {
-      await userModel.destroy({ where: { id } });
+      if (user) {
+        await user.destroy();
+      }
+
+      return res.json(user);
+    } catch (e) {
+      next(e);
+      console.log(e);
     }
-
-    return res.json(user);
   }
 
-  async createPdf(req: Request, res: Response) {
-    const { email } = req.body;
+  async createPdf(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email } = req.body;
+      if (!validateEmail(email)) {
+        return next(ApiError.badRequest('Not all fields are filled in correctly!'));
+      }
 
-    const user = await userModel.findOne({ where: { email } }) as userData;
+      const user = await userModel.findOne({ where: { email } }) as userData | null;
 
-    if (!user) {
-      return res.json(false);
+      if (!user) {
+        return res.json(false);
+      }
+
+      if (user.pdf){
+        deleteFile(user.pdf);
+      }
+      const pdfName = savePdf(`${user.firstName} ${user.lastName}`, user.image);
+
+      await userModel.update({ pdf: pdfName }, { where: { email } });
+      return res.json(true);
+    } catch (e) {
+      next(e);
+      console.log(e);
     }
-
-    if (user.pdf){
-      fs.unlink(path.resolve(__dirname, '..', 'static', user.pdf), (e) => {
-        if (e) {
-          console.log(e);
-        }
-      })
-    }
-
-    const pdfDoc = new Pdfkit;
-    const pdfName = `${uuidv4()}.pdf`;
-
-    pdfDoc.pipe(fs.createWriteStream(path.resolve(__dirname, '..', 'static', pdfName)));
-    pdfDoc.text(`${user.firstName} ${user.lastName}`);
-    pdfDoc.image(path.resolve(__dirname, '..', 'static', user.image), {cover: [450, 150], align: 'center'});
-    pdfDoc.end();
-
-    await userModel.update({ pdf: pdfName }, { where: { email }});
-
-    return res.json(true);
   }
+}
+
+
+function saveImage(image: imageData) {
+  let imageName = `${uuidv4()}.${image.mimetype.split('/')[1]}`;
+  image.mv(path.resolve(__dirname, '..', 'static', imageName));
+
+  return imageName;
+}
+
+function savePdf(text: string, image: string) {
+  const pdfName = `${uuidv4()}.pdf`;
+
+  const pdfDoc = new Pdfkit;
+  pdfDoc.pipe(fs.createWriteStream(path.resolve(__dirname, '..', 'static', pdfName)));
+  pdfDoc.text(text);
+  const filePath = path.resolve(__dirname, '..', 'static', image);
+
+  if (fs.existsSync(filePath)) {
+    pdfDoc.image(filePath, {cover: [450, 150], align: 'center'});
+  }
+  pdfDoc.end();
+
+  return pdfName;
+}
+
+function deleteFile(file: string) {
+  const filePath = path.resolve(__dirname, '..', 'static', file);
+
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
+function validateEmail(email: string) {
+  if (email == undefined) {
+    return false;
+  }
+
+  const EMAIL_REGEXP = /^(([^<>()[\].,;:\s@"]+(\.[^<>()[\].,;:\s@"]+)*)|(".+"))@(([^<>()[\].,;:\s@"]+\.)+[^<>()[\].,;:\s@"]{2,})$/iu;
+
+  return EMAIL_REGEXP.test(email);
+}
+
+function validateLine(line: string) {  
+  if (line == undefined) {
+    return false;
+  }
+
+  const LINE_REGEXP = /^[a-zA-Z0-9]+$/;
+
+  return LINE_REGEXP.test(line);
 }
 
 export default new UserController();
